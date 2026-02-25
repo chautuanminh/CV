@@ -10,9 +10,9 @@ Build a system that processes pickleball match video to **track the ball, player
 
 ```
 Input Video
-    ├── Model 1: Player Detection (YOLOv8n + ByteTrack)
-    ├── Model 2: Ball Detection (YOLOv8n optimized for small objects)
-    └── Model 3: Court Segmentation (YOLOv8n Segmentation)
+    ├── Model 1: Player Detection (YOLOv26n + ByteTrack)
+    ├── Model 2: Ball Detection (YOLOv26n)
+    └── Model 3: Court Segmentation (YOLOv26n Segmentation)
             │
             ▼
       Dynamic Homography Matrix (computed per-frame on mask corners)
@@ -49,14 +49,14 @@ Input Video
 
 ## Phase 2 — Model Training
 
-### 2.1 Player Detection (YOLOv8)
+### 2.1 Player Detection (YOLOv26)
 
 | Parameter | Value |
 |-----------|-------|
 | Base model | `yolo26n.pt` (or standard `yolov8n.pt`) |
 | Output | Bounding boxes |
 
-### 2.2 Ball Detection (YOLOv8)
+### 2.2 Ball Detection (YOLOv26)
 
 Used YOLOv8 optimized for small objects, replacing TrackNet due to faster inference and better coverage/stability (less jitter).
 
@@ -65,7 +65,7 @@ Used YOLOv8 optimized for small objects, replacing TrackNet due to faster infere
 | Input size | High-res evaluation |
 | Tracking | Custom buffer logic mapping trajectory |
 
-### 2.3 Court Segmentation (YOLOv8 Segmentation)
+### 2.3 Court Segmentation (YOLOv26 Segmentation)
 
 Replaced ResNet50 keypoint regression with robust YOLO instance segmentation.
 
