@@ -1,8 +1,8 @@
-# Tennis Video Analysis — Implementation Plan
+# Pickleball Video Analysis — Implementation Plan
 
 ## Goal
 
-Build a system that processes tennis match video to **track the ball, players, and court** — then derives **ball speed**, **trajectories**, and **serve counts per player**.
+Build a system that processes pickleball match video to **track the ball, players, and court** — then derives analytics and overlays for a comprehensive video output.
 
 ---
 
@@ -10,21 +10,21 @@ Build a system that processes tennis match video to **track the ball, players, a
 
 ```
 Input Video
-    ├── Model 1: Player Detection (YOLOv8x + BotSORT tracking)
-    ├── Model 2: Ball Detection (YOLOv8 or TrackNet heatmap)
-    └── Model 3: Court Keypoint Detection (ResNet50 → 14 keypoints)
+    ├── Model 1: Player Detection (YOLOv8n + ByteTrack)
+    ├── Model 2: Ball Detection (YOLOv8n optimized for small objects)
+    └── Model 3: Court Segmentation (YOLOv8n Segmentation)
             │
             ▼
-      Homography Matrix (pixel → real-world meters)
+      Dynamic Homography Matrix (computed per-frame on mask corners)
             │
             ▼
-      Analytics Engine
-        ├── Ball speed (m/s → km/h)
-        ├── Serve detection (toss + speed spike + direction)
-        └── Per-player serve counts
+      Analytics Engine & Overlay Renderer
+        ├── Trajectory rendering
+        ├── Player tracking trails
+        └── Court boundary projection
             │
             ▼
-      Outputs: Annotated Video + JSON Stats
+      Outputs: Annotated Video `*_full_pipeline.mp4`
 ```
 
 ---
@@ -53,99 +53,53 @@ Input Video
 
 | Parameter | Value |
 |-----------|-------|
-| Base model | `yolov8x.pt` (COCO pre-trained) |
-| Input size | 640×640 |
-| Epochs | 100 |
-| Batch size | 16 |
+| Base model | `yolo26n.pt` (or standard `yolov8n.pt`) |
+| Output | Bounding boxes |
 
-```bash
-python train_player_detector.py train --data data/players.yaml --epochs 100 --device 0
-```
+### 2.2 Ball Detection (YOLOv8)
 
-### 2.2 Ball Detection
-
-**Option A — YOLOv8** (simpler, start here):
+Used YOLOv8 optimized for small objects, replacing TrackNet due to faster inference and better coverage/stability (less jitter).
 
 | Parameter | Value |
 |-----------|-------|
-| Base model | `yolov8m.pt` |
-| Input size | 1280×1280 (high-res for small objects) |
-| Epochs | 150 |
+| Input size | High-res evaluation |
+| Tracking | Custom buffer logic mapping trajectory |
 
-```bash
-python train_ball_detector.py train --data data/ball.yaml --epochs 150 --imgsz 1280 --device 0
-```
+### 2.3 Court Segmentation (YOLOv8 Segmentation)
 
-**Option B — TrackNet** (higher accuracy for fast/blurry balls):
+Replaced ResNet50 keypoint regression with robust YOLO instance segmentation.
 
 | Parameter | Value |
 |-----------|-------|
-| Input | 3 consecutive frames (640×360) |
-| Output | Heatmap with Gaussian at ball center |
-| Epochs | 500 |
-
-```bash
-python train_tracknet.py train --frames-dir data/frames --annotations data/ball_annotations.json --device cuda:0
-```
-
-### 2.3 Court Keypoint Detection (ResNet50)
-
-| Parameter | Value |
-|-----------|-------|
-| Backbone | ResNet50 (ImageNet pre-trained) |
-| Output | 28 values (14 keypoints × 2 coords) |
-| Epochs | 200 |
-
-```bash
-python train_court_detector.py train --images-dir data/court_images --annotations data/court_keypoints.json --device cuda:0
-```
+| Output | Binary mask of the court surface |
+| Processing | Contours -> 4 corners -> Homography Matrix |
 
 ---
 
-## Phase 3 — Analytics Pipeline
+## Phase 3 — Full Pipeline Execution
 
-### Ball Speed
-1. Court keypoints → homography matrix (pixel → real-world meters)
-2. Transform ball positions per frame
-3. Speed = frame-to-frame displacement × FPS → km/h
-4. Smoothed via rolling average (window=5)
-
-### Serve Detection
-1. **Ball toss** — ball moves upward significantly near a player
-2. **Contact** — speed spike above threshold (80+ km/h)
-3. **Assignment** — nearest tracked player = server
-4. Cooldown prevents double-counting
-
----
-
-## Phase 4 — Running the Full Pipeline
+Orchestrated through `test/full_pipeline.py`, which:
+1. Translates video frames
+2. Computes the dynamic homography matrix frame-by-frame
+3. Runs ByteTrack-assisted YOLO for players
+4. Tracks the ball and maintains trail history
+5. Outputs to a combined MP4 video
 
 ```bash
 # Process a video end-to-end
-python pipeline.py match.mp4 --ball-model yolo --output output/result.mp4
-
-# With TrackNet instead
-python pipeline.py match.mp4 --ball-model tracknet --tracknet-weights weights/tracknet/tracknet_best.pth
+python test/full_pipeline.py --video res/src/Final.mp4
 ```
 
 **Outputs:**
-- `output/result.mp4` — annotated video with player boxes, ball trail, speed overlay
-- `output/result.json` — ball speeds, serve counts per player, detection rates
+- `output/Final_full_pipeline.mp4` — annotated video with players boxes, ball trail, and court projection based on real-time homography.
 
 ---
 
-## Phase 5 — Training Schedule
+## Evaluation Targets & Metrics
 
-| Week | Task | Deliverable |
-|------|------|-------------|
-| 1–2 | Data collection & labeling | Labeled datasets |
-| 3 | Train player detector | `best_player.pt`, mAP > 0.90 |
-| 4–5 | Train ball detector | `best_ball.pt`, F1 > 0.85 |
-| 5–6 | Train court model | `court_best.pth`, error < 5px |
-| 7 | Integrate pipeline | End-to-end processing |
-| 8 | Build analytics | Speed + serve counting |
-| 9 | Evaluation & tuning | Accuracy report |
-| 10 | Final output | Demo with overlays + stats |
+1.  **Coverage:** yolo26n detects the ball in significantly more frames than traditional baselines.
+2.  **Stability:** Maintains extremely few jitter spikes compared to TrackNet.
+3.  **Performance:** Capable of processing videos purely on CPU at reasonable speeds.
 
 ---
 
@@ -167,26 +121,18 @@ python pipeline.py match.mp4 --ball-model tracknet --tracknet-weights weights/tr
 ```
 pickleball/
 ├── config.py                      # Central configuration
-├── pipeline.py                    # End-to-end video processor
 ├── requirements.txt               # Python dependencies
 ├── IMPLEMENTATION_PLAN.md         # This file
-├── train_player_detector.py       # YOLOv8 player training
-├── train_ball_detector.py         # YOLOv8 ball training
-├── train_tracknet.py              # TrackNet ball training
-├── train_court_detector.py        # Court keypoint training
+├── agents.md                      # Pipeline summary
 ├── models/
-│   ├── tracknet.py                # TrackNet architecture
-│   └── court_keypoint.py          # ResNet50 court model
-├── analytics/
-│   ├── speed.py                   # Ball speed estimation
-│   ├── serve_detection.py         # Serve counting
-│   └── player_assignment.py       # Player side assignment
-├── data/
-│   ├── extract_frames.py          # Frame extraction utility
-│   ├── dataset.py                 # PyTorch dataset classes
-│   └── convert_annotations.py     # COCO/VOC → YOLO converters
-├── weights/                       # Trained model weights (gitignored)
-└── output/                        # Pipeline output videos + JSON
+│   ├── court_homography.py        # Segmentation-to-homography logic
+│   └── ...                        # ONNX/PT model weights
+├── test/
+│   ├── full_pipeline.py           # End-to-end video processor
+│   ├── homography_precheck.py     # Static homography sampling/debug script
+│   └── apply_homography_video.py  # Court tracking validation script
+├── output/                        # Pipeline output videos
+└── resy/                          # README and demo artifacts
 ```
 
 ---
