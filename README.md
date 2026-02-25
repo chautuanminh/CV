@@ -26,6 +26,10 @@ In addition to athletes, the model is trained to recognize officials for better 
 Advanced segmentation masks are applied to define the field of play, enabling automated line-call analysis.
 ![Court Segmentation](./resy/Screenshot%202026-02-21%20221137.png)
 
+### 4. Homography Transformation
+The system projects the segmented court to a 2D top-down view using homography, ensuring accurate spatial mapping for analysis. The homography matrix is computed dynamically on **every frame**, resulting in robust performance even with moving or panning cameras.
+![Homography Transformation](./resy/frame_000090_t3.0s.jpg)
+
 ---
 
 ## 📊 Performance Comparison: YOLO vs. TrackNet
@@ -44,3 +48,4 @@ We evaluated our **yolo26n** approach against **TrackNet** for ball tracking per
 1.  **Higher Coverage:** yolo26n detected the ball in **~18% more frames** than TrackNet.
 2.  **Superior Stability:** TrackNet exhibited high jitter with **32 spikes** over 80px and an unrealistic 95th percentile speed (476px), suggesting frequent "teleportation" errors. yolo26n remained extremely stable with only **5 jitter spikes**.
 3.  **Consistency:** While TrackNet had a shorter maximum miss streak, its detections were far noisier. yolo26n's lower 95th percentile speed (43.56px) represents a much more physically accurate ball trajectory.
+4.  **Processing:** The Combined pipeline took 264.4s to process 1133 frames of a highlight video (AMD RYZEN 5 4600H, 16GB RAM, No GPU)

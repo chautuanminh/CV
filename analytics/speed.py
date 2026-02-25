@@ -11,7 +11,7 @@ import cv2
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import COURT_REFERENCE_POINTS, ANALYTICS, VIDEO
+from config import COURT_REFERENCE_POINTS_FT, ANALYTICS, VIDEO
 
 
 def compute_homography(
@@ -31,7 +31,7 @@ def compute_homography(
         3×3 homography matrix.
     """
     if reference_points is None:
-        reference_points = COURT_REFERENCE_POINTS
+        reference_points = COURT_REFERENCE_POINTS_FT
 
     src = np.array(detected_keypoints, dtype=np.float32)
     dst = np.array(reference_points, dtype=np.float32)

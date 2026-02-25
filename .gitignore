@@ -1,6 +1,8 @@
-﻿TrackNet-20260213T072652Z-1-002.zip
-Dataset-001.zip
-Pickleball Vision.v1i.yolo26.zip
-hehe
+﻿__pycachce__
 datasets
-res
+output
+models
+test/__pycache__
+data
+IMPLEMENTATION_PLAN.md
+agents.md

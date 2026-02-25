@@ -1,9 +1,9 @@
 """
-Tennis Video Analysis — End-to-End Pipeline
+Pickleball Video Analysis — End-to-End Pipeline
 
-Orchestrates all three models (player detection, ball detection, court keypoints)
-and analytics modules (speed estimation, serve detection) to process a tennis
-match video and produce annotated output with statistics.
+Orchestrates all models (player detection, ball detection, court homography)
+and analytics modules (speed estimation, serve detection) to process a
+pickleball match video and produce annotated output with statistics.
 
 Usage:
     python pipeline.py video.mp4
@@ -24,10 +24,11 @@ from tqdm import tqdm
 
 from config import (
     PLAYER_MODEL, BALL_MODEL_YOLO, BALL_MODEL_TRACKNET,
-    COURT_MODEL, COURT_REFERENCE_POINTS, VIDEO, ANALYTICS,
+    COURT_SEGMENT_MODEL, VIDEO, ANALYTICS,
     WEIGHTS_DIR, OUTPUT_DIR,
 )
-from analytics.speed import compute_homography, compute_ball_speed, get_max_speed
+from models.court_homography import CourtHomographyDetector
+from analytics.speed import compute_ball_speed, get_max_speed
 from analytics.serve_detection import ServeDetector
 from analytics.player_assignment import (
     extract_player_positions_from_boxes,
@@ -36,13 +37,16 @@ from analytics.player_assignment import (
 )
 
 
-class TennisAnalysisPipeline:
+class PickleballAnalysisPipeline:
     """
-    End-to-end tennis video analysis pipeline.
+    End-to-end pickleball video analysis pipeline.
 
     Supports two ball detection backends:
     - 'yolo'     : YOLOv8 bounding-box detector (simpler, faster)
     - 'tracknet' : Heatmap regression model (higher accuracy)
+
+    Court detection uses YOLO segmentation + homography projection
+    (replaces fragile Hough Transform / ResNet keypoint approach).
 
     Outputs:
     - Annotated video with player boxes, ball trail, court overlay
@@ -55,7 +59,7 @@ class TennisAnalysisPipeline:
         ball_model_type: str = "yolo",
         ball_yolo_weights: str | None = None,
         tracknet_weights: str | None = None,
-        court_weights: str | None = None,
+        court_segment_weights: str | None = None,
         device: str = "0",
     ):
         self.device = device
@@ -96,30 +100,19 @@ class TennisAnalysisPipeline:
         else:
             raise ValueError(f"Unknown ball model type: {ball_model_type}")
 
-        # ── Load court model ──
-        import torch
-        from models.court_keypoint import CourtKeypointModel
-        from torchvision import transforms
-
-        court_path = court_weights or str(WEIGHTS_DIR / "court" / "court_best.pth")
-        self.court_model = CourtKeypointModel(
-            num_keypoints=COURT_MODEL["num_keypoints"],
-            pretrained=False,
-        )
-        if Path(court_path).exists():
-            self.court_model.load_state_dict(torch.load(court_path, map_location="cpu"))
-            self.court_model.eval()
+        # ── Load court segmentation model (homography-based) ──
+        court_seg_path = court_segment_weights or COURT_SEGMENT_MODEL["weights"]
+        if Path(court_seg_path).exists():
+            self.court_detector = CourtHomographyDetector(
+                model_path=court_seg_path,
+                conf=COURT_SEGMENT_MODEL["confidence_threshold"],
+            )
             self.court_loaded = True
         else:
-            print(f"[WARN] Court weights not found at {court_path}. Speed estimation will be skipped.")
+            print(f"[WARN] Court segmentation weights not found at {court_seg_path}. "
+                  f"Court detection & speed estimation will be skipped.")
+            self.court_detector = None
             self.court_loaded = False
-
-        self.court_transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(COURT_MODEL["input_size"]),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
 
     def _detect_players(self, frame: np.ndarray) -> list[dict]:
         """Detect and track players in a frame."""
@@ -193,16 +186,16 @@ class TennisAnalysisPipeline:
 
         return {"x": None, "y": None}
 
-    def _detect_court(self, frame: np.ndarray) -> np.ndarray | None:
-        """Detect court keypoints."""
-        if not self.court_loaded:
-            return None
+    def _detect_court(self, frame: np.ndarray):
+        """
+        Detect court via YOLO segmentation + homography.
 
-        h, w = frame.shape[:2]
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        tensor = self.court_transform(rgb).unsqueeze(0)
-        keypoints = self.court_model.predict_keypoints(tensor, w, h)
-        return keypoints
+        Returns:
+            (corners, H, mask) or (None, None, None).
+        """
+        if not self.court_loaded or self.court_detector is None:
+            return None, None, None
+        return self.court_detector.detect(frame)
 
     def _draw_annotations(
         self,
@@ -210,7 +203,7 @@ class TennisAnalysisPipeline:
         players: list[dict],
         ball_pos: dict,
         ball_trail: list[dict],
-        court_keypoints: np.ndarray | None,
+        court_H: np.ndarray | None,
         speed_kmh: float | None,
         serve_event: dict | None,
         serve_counts: dict,
@@ -218,10 +211,13 @@ class TennisAnalysisPipeline:
         """Draw all annotations on a frame."""
         annotated = frame.copy()
 
-        # Draw court keypoints
-        if court_keypoints is not None:
-            for i, (kx, ky) in enumerate(court_keypoints):
-                cv2.circle(annotated, (int(kx), int(ky)), 4, VIDEO["annotation_color_court"], -1)
+        # Draw court lines via homography projection
+        if court_H is not None:
+            annotated = CourtHomographyDetector.project_court_lines(
+                annotated, court_H,
+                color=VIDEO["annotation_color_court"],
+                thickness=2,
+            )
 
         # Draw player bounding boxes
         for player in players:
@@ -243,7 +239,6 @@ class TennisAnalysisPipeline:
             if p["x"] is not None
         ]
         for i in range(1, len(trail_points)):
-            alpha = int(255 * (i / len(trail_points)))
             cv2.line(annotated, trail_points[i - 1], trail_points[i],
                      VIDEO["annotation_color_ball"], 2)
 
@@ -298,7 +293,7 @@ class TennisAnalysisPipeline:
         writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         print("=" * 60)
-        print("  Tennis Analysis Pipeline")
+        print("  Pickleball Analysis Pipeline")
         print("=" * 60)
         print(f"  Video     : {video_path.name}")
         print(f"  Resolution: {width}×{height} @ {fps:.1f} FPS")
@@ -328,16 +323,13 @@ class TennisAnalysisPipeline:
 
             # ── Court detection (once on first frame) ──
             if frame_idx == 0:
-                court_keypoints = self._detect_court(frame)
-                if court_keypoints is not None:
-                    try:
-                        homography = compute_homography(court_keypoints)
-                        print("[OK] Court detected, homography computed")
-                    except (ValueError, RuntimeError) as e:
-                        print(f"[WARN] Homography failed: {e}")
-                        homography = None
-            else:
-                court_keypoints = None  # Reuse first-frame detection
+                corners, court_H, court_mask = self._detect_court(frame)
+                if court_H is not None:
+                    homography = court_H
+                    print("[OK] Court detected, homography computed")
+                else:
+                    print("[WARN] Court detection failed — no homography.")
+                    homography = None
 
             # ── Player detection ──
             players = self._detect_players(frame)
@@ -373,14 +365,14 @@ class TennisAnalysisPipeline:
             # ── Annotate frame ──
             annotated = self._draw_annotations(
                 frame, players, ball_pos, ball_positions,
-                court_keypoints if frame_idx == 0 else None,
+                homography,
                 current_speed, serve_event, serve_detector.serve_counts,
             )
 
             writer.write(annotated)
 
             if show_preview:
-                cv2.imshow("Tennis Analysis", annotated)
+                cv2.imshow("Pickleball Analysis", annotated)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
@@ -439,7 +431,7 @@ class TennisAnalysisPipeline:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Tennis Video Analysis Pipeline — track ball, players, court; "
+        description="Pickleball Video Analysis Pipeline — track ball, players, court; "
                     "compute ball speed and count serves per player.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -457,18 +449,18 @@ Examples:
     parser.add_argument("--player-weights", default=None, help="Player detector weights")
     parser.add_argument("--ball-weights", default=None, help="Ball YOLO weights")
     parser.add_argument("--tracknet-weights", default=None, help="TrackNet weights")
-    parser.add_argument("--court-weights", default=None, help="Court model weights")
+    parser.add_argument("--court-weights", default=None, help="Court segmentation model weights")
     parser.add_argument("--device", default="0", help="Device (0, 1, cpu)")
     parser.add_argument("--show", action="store_true", help="Show live preview")
 
     args = parser.parse_args()
 
-    pipeline = TennisAnalysisPipeline(
+    pipeline = PickleballAnalysisPipeline(
         player_weights=args.player_weights,
         ball_model_type=args.ball_model,
         ball_yolo_weights=args.ball_weights,
         tracknet_weights=args.tracknet_weights,
-        court_weights=args.court_weights,
+        court_segment_weights=args.court_weights,
         device=args.device,
     )
 

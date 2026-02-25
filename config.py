@@ -61,50 +61,64 @@ BALL_MODEL_TRACKNET = {
 }
 
 
-# ──────────────────────────── Court Keypoint Detection ─────────────────
-COURT_MODEL = {
-    "backbone": "resnet50",
-    "num_keypoints": 14,             # 14 landmarks on a tennis court
-    "input_size": (224, 224),
-    "epochs": 200,
-    "batch_size": 16,
-    "lr": 0.0001,
-    "weight_decay": 1e-5,
+# ──────────────────────────── Court Segmentation (Homography) ──────────
+COURT_SEGMENT_MODEL = {
+    "weights": str(MODELS_DIR / "court_segment.pt"),
+    "confidence_threshold": 0.25,
 }
 
-# ITF standard tennis court dimensions in meters
-COURT_DIMENSIONS = {
-    "length": 23.77,                 # Baseline to baseline
-    "width_singles": 8.23,
-    "width_doubles": 10.97,
-    "service_line_dist": 6.40,       # From net to service line
-    "net_height": 0.914,             # Center net height
+# Standard pickleball court dimensions (feet)
+PICKLEBALL_COURT = {
+    "width_ft": 20,                  # Sideline to sideline
+    "length_ft": 44,                 # Baseline to baseline
+    "nvz_depth_ft": 7,               # Non-volley zone (kitchen) depth from net
+    "net_position_ft": 22,           # Net at mid-court
 }
 
-# 14 reference keypoints in real-world coordinates (meters)
-# Origin = bottom-left corner of the doubles court
-COURT_REFERENCE_POINTS = [
-    # Near baseline (bottom)
-    (0.0, 0.0),                      # 0: bottom-left corner
-    (10.97, 0.0),                    # 1: bottom-right corner
-    # Far baseline (top)
-    (0.0, 23.77),                    # 2: top-left corner
-    (10.97, 23.77),                  # 3: top-right corner
-    # Near service line
-    (1.37, 6.40),                    # 4: service-left (near)
-    (9.60, 6.40),                    # 5: service-right (near)
-    # Far service line
-    (1.37, 17.37),                   # 6: service-left (far)
-    (9.60, 17.37),                   # 7: service-right (far)
-    # Net posts
-    (0.0, 11.885),                   # 8: net-left
-    (10.97, 11.885),                 # 9: net-right
-    # Center service line endpoints
-    (5.485, 6.40),                   # 10: center-service (near)
-    (5.485, 17.37),                  # 11: center-service (far)
-    # Center marks
-    (5.485, 0.0),                    # 12: center-mark (near baseline)
-    (5.485, 23.77),                  # 13: center-mark (far baseline)
+# Scaled reference coordinate system: 1 ft = 10 units
+import numpy as np
+
+_SCALE = 10
+_W   = PICKLEBALL_COURT["width_ft"]  * _SCALE   # 200
+_H   = PICKLEBALL_COURT["length_ft"] * _SCALE   # 440
+_NET = _H // 2                                    # 220
+_NVZ = PICKLEBALL_COURT["nvz_depth_ft"] * _SCALE  # 70
+_NVZ_TOP = _NET - _NVZ                            # 150
+_NVZ_BOT = _NET + _NVZ                            # 290
+_MID = _W // 2                                     # 100
+
+# Reference corners for homography: [TL, TR, BR, BL]
+STANDARD_CORNERS = np.array([
+    [0,   0  ],   # Top-left
+    [_W,  0  ],   # Top-right
+    [_W,  _H ],   # Bottom-right
+    [0,   _H ],   # Bottom-left
+], dtype="float32")
+
+# All court line segments in the reference coordinate system
+COURT_LINES_REF = [
+    # Outer boundary
+    ([0, 0],        [_W, 0      ]),   # Top baseline
+    ([_W, 0],       [_W, _H     ]),   # Right sideline
+    ([_W, _H],      [0,  _H     ]),   # Bottom baseline
+    ([0,  _H],      [0,  0      ]),   # Left sideline
+    # Net
+    ([0, _NET],     [_W, _NET   ]),
+    # Non-Volley Zone (kitchen) lines
+    ([0, _NVZ_TOP], [_W, _NVZ_TOP]),
+    ([0, _NVZ_BOT], [_W, _NVZ_BOT]),
+    # Centre service lines (baseline → NVZ only, NOT through kitchen)
+    ([_MID, 0      ], [_MID, _NVZ_TOP]),   # Top half
+    ([_MID, _NVZ_BOT], [_MID, _H      ]),  # Bottom half
+]
+
+# Real-world court reference points in feet (for speed estimation)
+# 4 corners: TL, TR, BR, BL — same order as STANDARD_CORNERS
+COURT_REFERENCE_POINTS_FT = [
+    (0.0, 0.0),                       # TL
+    (20.0, 0.0),                      # TR
+    (20.0, 44.0),                     # BR
+    (0.0, 44.0),                      # BL
 ]
 
 
