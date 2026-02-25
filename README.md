@@ -9,7 +9,7 @@ The project utilizes specialized models to extract meaningful data from pickleba
 *   **Player Tracking:** yolo26n integrated with **ByteTrack** for consistent player ID maintenance.
 *   **Ball Detection:** yolo26n optimized for small object detection to track the high-speed pickleball.
 *   **Court Segmentation:** yolo26n for precise identification of the court boundaries and key areas.
-
+Link to the inference video https://drive.google.com/file/d/1uZTPiMMsqEjl3Xe34z4AA_ppG15MowQM/view?usp=sharing
 ---
 
 ## 📸 Inference Demonstrations
