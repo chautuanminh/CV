@@ -33,17 +33,11 @@ Input Video
 
 | Component | Labels Needed | Recommended Tool | Min. Size |
 |-----------|--------------|------------------|-----------|
-| Players | Bounding boxes (`player`) | Roboflow / CVAT | ~500 images |
-| Ball | Bounding boxes (`ball`) or center points | Roboflow | ~5,000 frames |
-| Court | 14 keypoint (x,y) coordinates per image | Label Studio | ~1,000 images |
+| Players | Bounding boxes (`player`) | Roboflow  | ~3100 images |
+| Ball    | Bounding boxes (`ball`) or center points | Roboflow | ~6,000 frames |
+| Court   | segmentation | Roboflow | ~1,300 images |
 
-### Steps
-1. Collect broadcast or fixed-camera tennis footage (720p+)
-2. Extract frames: `python data/extract_frames.py video.mp4 -f 30`
-3. Label using Roboflow → export as YOLO format for players/ball
-4. Label court keypoints → export as JSON
-5. Convert annotations if needed: `python data/convert_annotations.py coco2yolo ...`
-6. Split: 70% train / 20% val / 10% test
+
 
 ---
 
@@ -53,12 +47,12 @@ Input Video
 
 | Parameter | Value |
 |-----------|-------|
-| Base model | `yolo26n.pt` (or standard `yolov8n.pt`) |
+| Base model | `yolo26n.pt` (or standard `yolov26n.pt`) |
 | Output | Bounding boxes |
 
 ### 2.2 Ball Detection (YOLOv26)
 
-Used YOLOv8 optimized for small objects, replacing TrackNet due to faster inference and better coverage/stability (less jitter).
+Used YOLOv26 optimized for small objects, replacing TrackNet due to faster inference and better coverage/stability (less jitter).
 
 | Parameter | Value |
 |-----------|-------|
